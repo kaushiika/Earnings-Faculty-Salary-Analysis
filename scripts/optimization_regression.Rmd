@@ -1,0 +1,269 @@
+---
+title: "Optimizing Regression"
+author: "Connor King"
+date: "2023-11-24"
+output: html_document
+---
+
+```{r}
+suppressMessages(library(tidyverse))
+df <- readRDS("scorecard_df.rds")
+```
+
+In class we learned how to optimize for simple linear regression where the model is $$y_i = \beta_0 + \beta_1x_i + \epsilon_i$$ 
+
+Here we will do Multiple Multivariate regression instead where the model is: $$\textbf{Y} = \textbf{Z}\boldsymbol{\beta} + \boldsymbol{\epsilon}$$ where $\boldsymbol{Z}$ is the design matrix that has the first column as all 1's and the rest are the independent (X variables). 
+
+## Gradient Descent Algorithm
+
+```{r}
+gradient_descent <- function(f, theta0, step_scale, stopping_deriv, max_iter, ...) {
+  theta <- theta0
+  for (i in 1:max_iter) {
+    gradient <- numDeriv::grad(f, theta, ...)
+    if(all(abs(gradient) < stopping_deriv)) {
+      break()
+    }
+    theta <- theta - step_scale * gradient
+  }
+  if (i == max_iter) {
+    warning("Maximal number of iterations reached, convergence not assured")
+  }
+  fit <- 
+    list(
+      argmin = theta,
+      final_gradient = gradient,
+      final_value = f(theta, ...),
+      iterations = i,
+      theta0 = theta0,
+      step_scale = step_scale,
+      stopping_deriv = stopping_deriv
+      )
+  return(fit)
+}
+```
+
+
+
+```{r}
+MSE_multivariate_regression <- function(B, Y, X) {
+  Z <- as.matrix(cbind(const = 1, X))
+  Y_pred <- Z %*% B
+  resids <- Y - Y_pred
+  return(mean(resids^2))
+}
+```
+
+
+## Trying with just 2 independent variables
+
+```{r}
+X_matrix <- as.matrix(df %>% select(
+         faculty_salary, 
+         admissions_sat_scores_average_overall
+         ))
+
+Y_matrix <- as.matrix(df %>% select(earnings_1_yr_after_completion_median, earnings_4_yrs_after_completion_median))
+
+
+#making a dataframe with no NAs
+df_small <- cbind(X_matrix, Y_matrix)
+df_clean <- df_small[complete.cases(df_small), ] #**** warning: many observations were removed. Thus we must look at NA's more withins of the variables
+
+#constant matrix 
+
+#X matrix to be used
+indp_matrix <- df_clean[, 1:2]
+
+#y matrix of 4 yr and 1 yr median earnings
+Y_earnings <- df_clean[, 3:4]
+
+n_predictors <- ncol(indp_matrix) + 1
+n_dependents <- ncol(Y_earnings)
+```
+
+Theoretical Results that will allow better guesses for $\theta_0$. The least squares estimates are $$\boldsymbol{\hat{\beta}}_{(i)} = (\boldsymbol{Z'Z})^{-1} \cdot \boldsymbol{Z}'\cdot \boldsymbol{Y}_{(i)}$$
+
+```{r}
+Z <- as.matrix(cbind(const = 1, indp_matrix))
+beta_hat <- solve(t(Z) %*% Z) %*% t(Z) %*% Y_earnings
+```
+
+
+```{r}
+theta0_matrix <- matrix(c(15000, 10000, 1, 1, 1, 15), byrow = TRUE, ncol = 2)
+```
+
+
+```{r}
+b_MSE_GD <-
+  gradient_descent(
+    f = MSE_multivariate_regression,
+    theta0 = theta0_matrix,
+    step_scale = 1e-6,
+    stopping_deriv = 1e-4,
+    max_iter = 10,
+    Y = Y_earnings,
+    X = indp_matrix
+    )
+
+b_MSE_GD
+```
+
+The coefficients are skyrocketing to infinity and I've tried tweaking everything. I think it's because of the varying scales of the independent variables and their large values.
+
+## Trying standardizing
+
+```{r}
+standardize <- function(x) {
+  return((x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE))
+}
+
+indp_matrix_standardized <- as.data.frame(lapply(as.data.frame(indp_matrix), standardize))
+
+indp_matrix_standardized <- as.matrix(indp_matrix_standardized)
+```
+
+
+Theoretical results:
+
+```{r}
+Z <- as.matrix(cbind(const = 1, indp_matrix_standardized))
+beta_hat <- solve(t(Z) %*% Z) %*% t(Z) %*% Y_earnings
+```
+
+```{r}
+theta0_matrix <- matrix(c(35000, 50000, 4000, 8000, 400, 2000), byrow = TRUE, ncol = 2)
+
+b_MSE_GD <-
+  gradient_descent(
+    f = MSE_multivariate_regression,
+    theta0 = theta0_matrix,
+    step_scale = 1e-3,
+    stopping_deriv = 1e-4,
+    max_iter = 10,
+    Y = Y_earnings,
+    X = indp_matrix_standardized
+    )
+
+b_MSE_GD
+```
+
+These gave much better results and seem to be converging to the theoretical coefficients
+
+### Standardizing with more than 2 independent variables
+
+```{r}
+X_matrix <- as.matrix(df %>% select(
+         faculty_salary, 
+         ft_faculty_rate, 
+         admissions_sat_scores_average_overall,
+         student_demographics_student_faculty_ratio,
+         student_size,
+         tuition_revenue_per_fte,
+         instructional_expenditure_per_fte,
+         aid_loan_principal,
+         student_retention_rate_four_year_full_time,
+         rank
+         ))
+
+
+Y_matrix <- as.matrix(df %>% select(earnings_1_yr_after_completion_median, earnings_4_yrs_after_completion_median))
+
+
+#making a dataframe with no NAs
+df_small <- cbind(X_matrix, Y_matrix)
+df_clean <- df_small[complete.cases(df_small), ]
+
+#creating the X matrix to be used
+indp_matrix <- df_clean[, 1:10]
+
+#standardizing the X matrix
+indp_matrix_standardized <- as.data.frame(lapply(as.data.frame(indp_matrix), standardize))
+
+indp_matrix_standardized <- as.matrix(indp_matrix_standardized)
+
+#Y_earnings <- df_clean[, 15:16]
+Y_earnings <- df_clean[, 11:12]
+
+n_predictors <- ncol(indp_matrix) + 1
+n_dependents <- ncol(Y_earnings)
+
+
+#Theoretical results
+Z <- as.matrix(cbind(const = 1, indp_matrix_standardized))
+beta_hat <- solve(t(Z) %*% Z) %*% t(Z) %*% Y_earnings
+
+```
+
+```{r}
+theta0_matrix <- matrix(c(40000, 50000, 8000, 8000, -10, -100, 500, 1000, 1000, 700, -500, -600, 1500, 2000, -500, -100, 700, 800, -1250, -150, 150, 650), byrow = TRUE, ncol = 2)
+
+b_MSE_GD <-
+  gradient_descent(
+    f = MSE_multivariate_regression,
+    theta0 = theta0_matrix,
+    step_scale = 1e-3,
+    stopping_deriv = 1e-4,
+    max_iter = 10,
+    Y = Y_earnings,
+    X = indp_matrix_standardized
+    )
+
+b_MSE_GD
+```
+
+# Trying Regression With Principal Component Analyis (PCA)
+
+We will reduce the dimensions via principal component analysis where $$Y_p = \boldsymbol{e'_{p}X}$$ are the principal components where $\boldsymbol{e}$ are the eigenvectors of the covariance matrix
+
+```{r}
+S <- cov(indp_matrix_standardized) #sample covariance matrix
+
+eig <- eigen(S) #eigenvalues & vectors
+
+ggplot(data.frame(eig$values), aes(x = c(1:length(eig$values)), y = eig$values)) +
+  geom_point() +
+  geom_line() +
+  labs(title = "Scree Plot",
+       x = "i-th Principal Component",
+       y = "Eigenvalue") +
+  theme_minimal()
+```
+
+As the scree-plot shows, the scree plot goes roughly flat around the 5th component.
+
+```{r}
+(eig$values[1] + eig$values[2] + eig$values[3] +eig$values[4] + eig$values[5]) / sum(eig$values)
+```
+
+The first five components 0.8885 of the sample variance. 
+
+### Regression using the principal Components
+
+```{r}
+pca_components <- eig$vectors[, 1:5]
+
+X_pca <- indp_matrix_standardized %*% pca_components
+
+#Theoretical results
+Z <- as.matrix(cbind(const = 1, X_pca))
+beta_hat <- solve(t(Z) %*% Z) %*% t(Z) %*% Y_earnings
+beta_hat
+```
+```{r}
+theta0_matrix <- matrix(c(40000, 50000, -2500, -4000, 500, 200, 600, 700, -500, -750, -1000, -400), byrow = TRUE, ncol = 2)
+
+b_MSE_GD <-
+  gradient_descent(
+    f = MSE_multivariate_regression,
+    theta0 = theta0_matrix,
+    step_scale = 1e-3,
+    stopping_deriv = 1e-4,
+    max_iter = 1000,
+    Y = Y_earnings,
+    X = X_pca
+    )
+
+b_MSE_GD
+```

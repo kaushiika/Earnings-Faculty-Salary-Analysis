@@ -1,0 +1,267 @@
+---
+title: "optimizing tests"
+author: "Connor King"
+date: "2023-11-26"
+output: html_document
+---
+
+
+```{r}
+suppressMessages(library(tidyverse))
+
+df_final <- read_rds("modeling_df.rds")
+```
+
+General linear regression model is $$\boldsymbol{Y_{n\times 1}} = \boldsymbol{X_{n \times p}} \cdot \boldsymbol{\beta_{p \times 1}} + \boldsymbol{\epsilon_{n \times 1}}$$
+
+Where $Y$ is a vector of responses, $\beta$ is a vector of parameters, $X$ is a vector of constants, and $\epsilon$ is a vector of independent normal random variables with expectation $E[\epsilon] = 0$ and variance-covariance matrix $\boldsymbol{\sigma}^2[\epsilon] = \boldsymbol{\sigma}^2\cdot\boldsymbol{I}$
+
+## Gradient Descent Algorithm Used in Class
+
+```{r}
+gradient_descent <- function(f, theta0, step_scale, stopping_deriv, max_iter, ...) {
+  theta <- theta0
+  
+  for (i in 1:max_iter) {
+    gradient <- numDeriv::grad(f, theta, ...)
+    if(any(is.na(gradient))) {
+      warning("NA values in gradient")
+      break
+    }
+    
+    if(all(abs(gradient) < stopping_deriv)) {
+      break()
+    }
+    theta <- theta - step_scale * gradient
+  }
+  if (i == max_iter) {
+    warning("Maximal number of iterations reached, convergence not assured")
+  }
+  fit <- 
+    list(
+      argmin = theta,
+      final_gradient = gradient,
+      final_value = f(theta, ...),
+      iterations = i,
+      theta0 = theta0,
+      step_scale = step_scale,
+      stopping_deriv = stopping_deriv
+      )
+  return(fit)
+}
+```
+
+## Least Squares Estimators
+
+The least squares criterion for multiple regression is $$Q = \sum_{i=1}^{n} (Y_i - (\beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2} + \ldots + \beta_{p-1} X_{i,p-1}))^2$$ the least squares estimators are those values of $\beta_0, \dots, \beta_{p-1}$ that minimize Q
+
+```{r}
+
+MSE_multiple_regression <- function(b, Y, X){
+  X <- cbind(1, X)
+  
+  Y_pred <- X %*% b
+  
+  resid <- Y - Y_pred
+  
+  return(mean(resid^2))
+}
+
+```
+
+```{r}
+df_final$rank_ind_numeric <- as.numeric(as.character(df_final$rank_ind))
+
+indp_vars <- as.matrix((df_final %>% select(
+  adm_rate,
+  #student_size,
+  faculty_salary,
+  ft_faculty_rate,
+  rank_ind_numeric,
+  student_fac_ratio,
+  #tuition_revenue_per_fte,
+  instructional_expenditure_per_fte
+)))
+
+Y_4yr_median <- as.matrix(df_final$median_earnings_4yr)
+Y_log_4yr <- as.matrix(df_final$log_earnings_4yr)
+
+theta0_0_4yr <- rep(0, ncol(indp_vars) + 1)
+
+
+theta0_log <- c(1, 1, 7, -1, 6, -2, -4)
+
+b_multiple_GD <-
+  gradient_descent(
+    f = MSE_multiple_regression,
+    theta0 = theta0_0_4yr,
+    step_scale = 1e-9,
+    stopping_deriv = 1e-4,
+    max_iter = 10,
+    Y = Y_4yr_median,
+    X = indp_vars
+    )
+
+b_multiple_GD
+```
+
+Compare to `lm()`
+
+```{r}
+coef(lm(median_earnings_4yr ~ adm_rate + student_size + faculty_salary + ft_faculty_rate + rank_ind_numeric + student_fac_ratio +  tuition_revenue_per_fte + instructional_expenditure_per_fte, data = df_final))
+
+coef(lm(log_earnings_4yr ~ adm_rate + faculty_salary + ft_faculty_rate + rank_ind_numeric + student_fac_ratio + instructional_expenditure_per_fte, data = df_final))
+
+#adm_rate, faculty_salary, ft_faculty_rate, rank_ind_numeric, student_fac_ratio, instructional_expenditure_per_fte
+#ownership, school type, check interaction terms like ownership,
+```
+
+## Feature Scaling
+
+Standardizing the independent variables except for the indicator variable `rank_ind_numeric`
+
+```{r}
+normalize <- function(x) {
+  return((x - mean(x)) / sd(x))
+}
+
+```
+
+```{r}
+#one-hot encoding for the ownership_label
+
+df_final$ownership_label <- as.factor(df_final$ownership_label)
+
+library(caret)
+
+dummies <- dummyVars("~ ownership_label", data = df_final)
+dummy_data <- predict(dummies, newdata = df_final)
+
+df_with_dummies <- cbind(df_final, dummy_data)
+
+df_with_dummies <- df_with_dummies %>% 
+  rename("ind_private_forprofit" = `ownership_label.Private For-Profit`) %>% 
+  rename("ind_private_nonprofit" = `ownership_label.Private Nonprofit`) %>% 
+  rename("ind_public" = `ownership_label.Public`)
+
+```
+
+With indicator variables, since we have 3, we drop one and it as the reference category otherwise we'd run into multicollinearity issues and one of the coefficients will be returned as `NA`. Therefore we will drop the public indicator variable and use the indicator variables for private for profit and private non profit. When both those variables are equal to zero, it suggests that the school is a public school.
+
+```{r}
+continuous_indp_vars <- df_final %>% select(
+  adm_rate,
+ # student_size,
+  faculty_salary,
+  ft_faculty_rate,
+  student_fac_ratio,
+#  tuition_revenue_per_fte,
+  instructional_expenditure_per_fte
+)
+
+scaled_indp_vars <- as.data.frame(lapply(continuous_indp_vars, normalize))
+scaled_indp_vars$rank_id_numeric <- df_with_dummies$rank_ind_numeric
+scaled_indp_vars$ind_private_forprofit <- df_with_dummies$ind_private_forprofit
+scaled_indp_vars$ind_private_nonprofit <- df_with_dummies$ind_private_nonprofit
+#scaled_indp_vars$ind_public <- df_with_dummies$ind_public
+scaled_indp_vars <- as.matrix(scaled_indp_vars)
+
+```
+
+Now we have an $X$ matrix with scaled independent variables excluding the indicator variable. Now I will continue attempting what I was doing earlier
+
+```{r}
+theta0_scaled <- theta0_0_4yr <- rep(0, ncol(scaled_indp_vars) + 1)
+
+
+b_multiple_GD <-
+  gradient_descent(
+    f = MSE_multiple_regression,
+    theta0 = theta0_scaled,
+    step_scale = 1e-1,
+    stopping_deriv = 1e-4,
+    max_iter = 10000,
+    Y = Y_4yr_median,
+    X = scaled_indp_vars
+    )
+
+b_multiple_GD
+```
+
+Compared with `lm()` with scaled variables
+
+```{r}
+scaled_df <- as.data.frame(cbind(scaled_indp_vars, Y_4yr_median))
+scaled_df <- scaled_df %>% rename("Y_4yr_median" = V9) 
+
+
+coef(lm(Y_4yr_median ~ adm_rate + faculty_salary + ft_faculty_rate + student_fac_ratio + instructional_expenditure_per_fte + rank_id_numeric + ind_private_forprofit + ind_private_nonprofit, data = scaled_df))
+```
+The robust regression results and the `lm()` results are the same
+
+### Microbenchmark
+
+```{r}
+library(microbenchmark)
+
+microbenchmark(
+  
+b_multiple_GD =
+  gradient_descent(
+    f = MSE_multiple_regression,
+    theta0 = theta0_scaled,
+    step_scale = 1e-1,
+    stopping_deriv = 1e-4,
+    max_iter = 10000,
+    Y = Y_4yr_median,
+    X = scaled_indp_vars
+    ),
+times = 5
+)
+
+```
+
+
+Check for Multicollinearity
+Before proceeding to bootstrap, it's great to check for multicollinearity among the predictors. This can be done using the Variance Inflation Factor (VIF):
+
+```{r}
+library(car)
+
+lm_for_vif <- lm(median_earnings_4yr ~ adm_rate + student_size + faculty_salary + ft_faculty_rate + rank_ind_numeric + student_fac_ratio + tuition_revenue_per_fte + instructional_expenditure_per_fte, data = df_final)
+vif_results <- vif(lm_for_vif)
+print(vif_results)
+
+```
+The VIF (Variance Inflation Factor) values for the predictors we chose are all below the typical thresholds of concern (5 or 10), indicating that multicollinearity is not a significant issue in our model. This is good, as it suggests that the regression coefficients we obtained from our model are reliable.
+
+```{r}
+set.seed(123)  # For reproducibility
+n_boots <- 1000  # Number of bootstrap samples
+boot_coefs <- matrix(NA, nrow = n_boots, ncol = length(coef(lm_for_vif)))
+
+for(i in 1:n_boots) {
+  boot_sample <- df_final[sample(nrow(df_final), replace = TRUE), ]
+  boot_model <- lm(median_earnings_4yr ~ adm_rate + student_size + faculty_salary + ft_faculty_rate + rank_ind_numeric + student_fac_ratio + tuition_revenue_per_fte + instructional_expenditure_per_fte, data = boot_sample)
+  boot_coefs[i, ] <- coef(boot_model)
+}
+
+# Calculate confidence intervals for each coefficient
+boot_ci <- apply(boot_coefs, 2, function(coef) quantile(coef, probs = c(0.025, 0.975)))
+print(boot_ci)
+
+```
+Intercept (Column 1): The interval [19433.08, 28066.64] suggests the average median earnings when all predictors are zero (though this scenario may not be practically feasible).
+adm_rate (Column 2): A wide interval [309.54, 6475.84] indicates significant variability in how admission rates impact median earnings.
+student_size (Column 3): The interval includes zero [-0.0477, 0.0982], suggesting that the size of the student body might not have a consistent impact on median earnings.
+faculty_salary (Column 4): With an interval [2.5093, 3.2966], this suggests a positive relationship between faculty salary and median earnings.
+ft_faculty_rate (Column 5): The negative lower bound [-5418.45] and positive upper bound [-1210.72] suggest an uncertain impact of full-time faculty rate on earnings.
+rank_ind_numeric (Column 6): The interval [-395.16, 1535.84] includes zero, indicating uncertainty in the impact of rank on earnings.
+student_fac_ratio (Column 7): The interval [-379.13, -35.20] implies a consistent negative impact of increasing student-to-faculty ratios on earnings.
+tuition_revenue_per_fte (Column 8): The interval [0.2020, 0.4473] suggests a positive impact of tuition revenue per FTE on earnings.
+instructional_expenditure_per_fte (Column 9): The interval includes zero [-0.1268, 0.1877], suggesting that instructional expenditure per FTE may not have a consistent or significant impact on earnings.
+Overall Interpretation
+The results indicate that faculty salary, student-faculty ratio, and tuition revenue per FTE are significant predictors of median earnings, with faculty salary and tuition revenue showing a positive relationship and student-faculty ratio showing a negative relationship.
+For some variables like student size and instructional expenditure per FTE, the results are less clear, as their confidence intervals include zero.
+The admission rate and full-time faculty rate show wide intervals, suggesting variability in their impact on median earnings.
+

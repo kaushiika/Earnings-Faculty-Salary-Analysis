@@ -1,0 +1,432 @@
+---
+title: "535 Final EDA"
+author: "Connor King"
+date: "2023-11-24"
+output: html_document
+---
+
+```{r}
+
+suppressMessages(library(tidyverse))
+
+df <- readRDS("scorecard_df.rds")
+```
+
+## Correlation Plot
+
+Glancing at quick correlations between the some of the variables
+
+```{r, warning = FALSE}
+library(corrplot)
+library(RColorBrewer)
+
+df$carnegie_size_setting <- as.integer(df$carnegie_size_setting)
+df$carnegie_undergrad <- as.integer(df$carnegie_undergrad)
+df$carnegie_basic <- as.integer(df$carnegie_basic)
+
+corr_plot_data <- df %>% 
+  select(earnings_4_yrs_after_completion_median, 
+         earnings_1_yr_after_completion_median, 
+         faculty_salary, 
+         ft_faculty_rate, 
+         earnings_1_yr_after_completion_not_working_not_enrolled_overall_count,
+         admissions_sat_scores_average_overall,
+         student_demographics_student_faculty_ratio,
+         carnegie_size_setting, carnegie_undergrad, carnegie_basic,
+         student_size,
+         tuition_revenue_per_fte,
+         instructional_expenditure_per_fte,
+         aid_loan_principal,
+         student_retention_rate_four_year_full_time,
+         rank,
+         degrees_awarded_predominant_recoded
+        
+         ) #student_enrollment_all, cost_avg_net_price_private causing errors
+
+corr_matrix <- cor(corr_plot_data, use = "pairwise.complete.obs") #ignores any na's between the 2 pairwise variables being compared
+
+#creating the correlation plot and saving it as a png
+
+corrplot(corr_matrix, 
+         method = "color",  
+         type = "upper", 
+         order = "hclust",
+         diag = TRUE,
+         addCoef.col = TRUE,
+         number.cex = 0.55,
+         tl.srt = 60,
+         tl.cex = 0.4)
+
+```
+
+## NA values
+
+```{r}
+library(naniar)
+library(visdat)
+
+gg_miss_var(df)
+
+```
+```{r}
+options(ggplot2.discrete.colour = NULL)
+options(ggplot2.discrete.fill = NULL)
+update.packages(ask = FALSE)
+
+```
+
+
+```{r}
+ggplot2::theme_set(ggplot2::theme_gray())
+vis_dat(df)
+```
+From these plots we can see that some variables have a large value of NAs, notably SAT admissions. Since the dataframe is ordered by state, it appears that some of the NAs in variables are not independent indicating that some schools in certain states have missing values for some variables.
+
+## Bar plots
+
+### Comparing States
+
+```{r}
+df_long <- df %>% 
+  pivot_longer( 
+               cols = c("earnings_4_yrs_after_completion_median", 'earnings_1_yr_after_completion_median'),
+               names_to = "earnings_type",
+               values_to = "earnings_value")
+
+df_long %>% 
+  ggplot(aes(x = state, y = earnings_value, fill = earnings_type)) +
+  geom_bar(stat = "identity", position = position_dodge()) + coord_flip()
+
+```
+
+### Comparing Online Only
+
+```{r}
+df_long %>% 
+  ggplot(aes(x = online_only, y = earnings_value, fill = earnings_type)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip()
+```
+### Comparing Carnegie Metrics
+
+```{r}
+df_long %>% 
+  ggplot(aes(x = carnegie_basic, y = earnings_value, fill = earnings_type)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip()
+```
+```{r}
+df_long %>% 
+  ggplot(aes(x = carnegie_size_setting, y = earnings_value, fill = earnings_type)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip()
+```
+
+```{r}
+df_long %>% 
+  ggplot(aes(x = carnegie_undergrad, y = earnings_value, fill = earnings_type)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip()
+```
+
+## Scatter Plots
+
+### Faculty Salary
+
+```{r}
+df %>% 
+  ggplot(aes(x = faculty_salary, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "blue") +
+  geom_smooth(method = "lm", color = "darkgreen")
+```
+
+```{r}
+df %>% 
+  ggplot(aes(x = faculty_salary, y = earnings_1_yr_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "red") +
+  geom_smooth(method = "lm", color = "darkgreen")
+```
+
+### SAT Scores
+
+```{r}
+df %>% 
+  ggplot(aes(x = admissions_sat_scores_average_overall, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "blue") +
+  geom_smooth(method = "lm", color = "green")
+```
+Note that a significant portion of the data was removed. 5527 rows were removed out of 6543.
+
+```{r}
+df %>% 
+  ggplot(aes(x = admissions_sat_scores_average_overall, y = earnings_1_yr_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "red") +
+  geom_smooth(method = "lm", color = "green")
+```
+### Admissions Rate
+
+```{r}
+df %>% 
+  ggplot(aes(x = admissions_admission_rate_overall, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "blue") +
+  geom_smooth(method = "lm", color = "green")
+```
+```{r}
+df %>% 
+  ggplot(aes(x = admissions_admission_rate_overall, y = earnings_1_yr_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "red") +
+  geom_smooth(method = "lm", color = "green")
+```
+## Aid Loan
+
+```{r}
+df %>% 
+  ggplot(aes(x = aid_loan_principal, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "blue") +
+  geom_smooth(method = "lm", color = "green")
+```
+```{r}
+df %>% 
+  ggplot(aes(x = aid_loan_principal, y = earnings_1_yr_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "red") +
+  geom_smooth(method = "lm", color = "green")
+```
+
+## Rank
+
+```{r}
+df %>% 
+  ggplot(aes(x = rank, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "blue") +
+  geom_smooth(method = "lm", color = "green")
+```
+```{r}
+df %>% 
+  ggplot(aes(x = rank, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "red") +
+  geom_smooth(method = "lm", color = "green")
+```
+
+
+```{r}
+numeric_data <- sampled_data %>% select_if(is.numeric)
+
+# Impute missing values with the median (or mean) for each column
+numeric_data_imputed <- numeric_data %>%
+  mutate_all(~ ifelse(is.na(.) | is.infinite(.), median(., na.rm = TRUE), .))
+
+# Check the structure again
+str(numeric_data_imputed)
+
+```
+```{r}
+# Calculate the correlation matrix
+cor_matrix <- cor(numeric_data_imputed, use = "pairwise.complete.obs")
+
+```
+Heatmap of the Correlation Matrix:
+After calculating the correlation matrix, we can visualize it using a heatmap, which is a useful tool for examining the relationships between variables:
+```{r}
+library(ggplot2)
+library(reshape2)
+
+# Melt the correlation matrix for ggplot
+melted_cor_matrix <- melt(cor_matrix)
+
+# Set the theme with readable axis text
+theme_set(theme_minimal(base_size = 12))
+
+# Creating the heatmap with improved label readability
+p <- ggplot(melted_cor_matrix, aes(Var2, Var1, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-1, 1)) +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 5),
+    axis.text.y = element_text(angle = 45, vjust = 1, hjust = 1, size = 5),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  ) +
+  labs(fill = "Correlation")
+
+# Viewing the plot
+print(p)
+
+# Saving the plot to a file with larger dimensions for better readability
+ggsave("heatmap.png", p, width = 15, height = 15, dpi = 300)
+
+
+```
+Color Gradient: The colors typically range from blue (negative correlation) to red (positive correlation), with white or neutral colors indicating no or very weak correlation.
+Dark Red Squares: These represent variables that have a strong positive correlation. If these squares are along the diagonal, it represents the correlation of the variable with itself, which is always 1. If off-diagonal, it means those two variables move together. For instance, if one variable increases, the other tends to increase as well.
+Dark Blue Squares: These indicate a strong negative correlation, meaning as one variable increases, the other tends to decrease.
+White or Light Colored Squares: These suggest little to no linear relationship between the variables.
+
+Interpretation:
+Earnings and Faculty Salary: If there's a dark red square between earnings_1_yr_after_completion_median and faculty_salary, it could suggest that institutions paying higher faculty salaries might be associated with graduates having higher earnings one year after completion.
+
+Admission Rates and Earnings: A dark blue square between admissions_admission_rate_overall and earnings_1_yr_after_completion_median could indicate that schools with lower admission rates (more selective) have graduates with higher earnings, a potential sign of the perceived value of more selective institutions.
+
+Tuition Costs and Earnings: Strong correlations between tuition costs (cost_tuition_in_state, cost_tuition_out_of_state) and post-graduation earnings could suggest whether higher tuition is correlated with higher post-graduation earnings.
+
+Student Retention and Faculty Salary: If there's a positive correlation between student_retention_rate_four_year_full_time and faculty_salary, it could be interpreted that higher faculty salaries might be contributing to better student retention rates, possibly due to higher quality teaching or more qualified faculty.
+
+SAT Scores and Earnings: A positive correlation between admissions_sat_scores_average_overall and earnings variables could imply that students with higher SAT scores, typically attending more academically rigorous institutions, might have higher earnings after graduation.
+
+Histograms
+Histograms for continuous variables like faculty salary and earnings.
+
+```{r}
+df %>%
+  select(faculty_salary, earnings_4_yrs_after_completion_median, earnings_1_yr_after_completion_median) %>%
+  gather(key = "variable", value = "value") %>%
+  ggplot(aes(x = value, fill = variable)) +
+  geom_histogram(bins = 30, alpha = 0.7) +
+  facet_wrap(~variable, scales = "free_x") +
+  theme_minimal() +
+  # Improvements for readability
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12), # Rotate x labels and increase size
+        axis.text.y = element_text(size = 12), # Increase size of y labels
+        strip.text = element_text(size = 14)) + # Increase size of facet labels
+  scale_x_continuous(labels = scales::comma_format()) + # Improve number format on x axis
+  scale_y_continuous(labels = scales::comma_format()) # Improve number format on y axis
+```
+Faculty Salary Histogram (Blue): This histogram shows the distribution of faculty salaries across all universities. The peak of the histogram indicates the most common salary range. The data seems to be concentrated in 6000-7000 range, suggesting that most faculty salaries are around that range. There might be a few outliers on the higher end.
+
+Median Earnings 1 Year After Completion Histogram (Red): This histogram represents how much students are earning one year after completing their education. The spread of the data is broad, indicating a wide variance in earnings. The peak is likely to indicate the most common earnings bracket, which could be lower than the average faculty salary.
+
+Median Earnings 4 Years After Completion Histogram (Green): Similar to the 1-year earnings, this histogram shows earnings 4 years after completion. If this histogram has a peak further to the right than the 1-year histogram, it would suggest that on average, earnings increase from the 1-year mark to the 4-year mark. However, from the histrogram it suggests that earnings decrease from the 1-year mark to the 4-year mark.
+
+Boxplots
+Boxplots to visualize the distribution of earnings by carnegie classifications.
+```{r}
+df %>% 
+  ggplot(aes(x = as.factor(carnegie_basic), y = earnings_4_yrs_after_completion_median)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+Boxplot for Categorical vs. Numeric Variables
+Boxplots are great for comparing distributions across different categories.
+```{r}
+#Boxplot of faculty salary by main campus 
+ggplot(sampled_data, aes(x = as.factor(main_campus), y = faculty_salary)) +
+  geom_boxplot() +
+  labs(x = "Main Campus", y = "Faculty Salary") +
+  theme_minimal()
+
+```
+Boxplot comparing faculty salaries between main campus institutions and those that are not considered main campuses.
+The TRUE category represents the main campus institutions, and the FALSE category represents other institutions.
+If the median line in the "FALSE" box is higher than in the "TRUE" box, it indicates that faculty salaries at non-main campus institutions are generally higher.
+A greater number of outliers in main campus category could indicate more variation in salary within that group.
+Since the boxes have different heights, this suggests that the spread of salaries (from Q1 to Q3) is different between the two categories.
+
+Scatter Plot with Regression Line
+Scatter plots for faculty salary against earnings after 4 years with a regression line
+```{r}
+df %>% 
+  ggplot(aes(x = faculty_salary, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(aes(color = as.factor(carnegie_basic)), alpha = 0.6) +
+  geom_smooth(method = "lm", color = "blue") +
+  theme_minimal() +
+  labs(color = "Carnegie Basic")
+
+```
+Depicts the relationship between faculty salary and median earnings of graduates 4 years after completion, with each point colored by the Carnegie classification of the institution.
+
+Each point represents an institution, with the position along the x-axis indicating faculty salary and the position along the y-axis indicating median earnings of graduates after 4 years.
+The color of the points corresponds to the Carnegie classification, which is a framework for classifying colleges and universities in the U.S. Each color represents a different category of classification, such as research universities, master's colleges and universities, baccalaureate colleges, etc.
+The regression line (in blue) represents the best-fit line through the data, indicating the overall trend between faculty salary and graduate earnings. Since the line slopes upwards from left to right, this suggests a positive correlation, meaning that as faculty salaries increase, the median earnings of graduates after 4 years also tend to be higher.
+The slope of the line indicates the strength and direction of the relationship. A steep slope indicates a strong relationship.
+The spread of the points around the line indicates the variability of the data. Since points are closely clustered around the line, this suggests that faculty salary is a good predictor of graduate earnings.
+```{r}
+#Scatter plot of faculty salary vs. median earnings after 4 years
+ggplot(sampled_data, aes(x = faculty_salary, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(x = "Faculty Salary", y = "Median Earnings after 4 Years") +
+  theme_minimal()
+
+```
+The scatter plot you've provided shows a comparison of faculty salaries against the median earnings of students 4 years after graduation. The red line represents a linear regression fit through the data points, showing the general trend or relationship between faculty salaries and student earnings 4 years after completion. The shaded area around the regression line represents the confidence interval for the regression estimate, giving a range where the true regression line is likely to exist.
+The upwards slope of the red line suggests a positive correlation between faculty salaries and student earnings after 4 years. This means that, on average, universities or colleges with higher faculty salaries tend to have graduates with higher median earnings after 4 years.
+The spread of the data points around the regression line indicates the strength of the correlation. A tight cluster of points close to the line would suggest a strong correlation.
+It's important to note that correlation does not imply causation, and thus while there may be a relationship between faculty salaries and graduate earnings, this does not necessarily mean that higher faculty salaries cause higher graduate earnings.
+
+Faceted Scatter Plot
+Faceted scatter plots allow for comparisons across different categories.
+```{r}
+#Scatter plot of faculty salary vs. earnings, faceted by Carnegie Basic Classification
+ggplot(sampled_data, aes(x = faculty_salary, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ carnegie_basic_label) +
+  labs(x = "Faculty Salary", y = "Median Earnings after 4 Years") +
+  theme_minimal()
+
+```
+
+Bar Plots:
+Bar plot of the median earnings by the predominant degree awarded.
+```{r}
+df %>% 
+  ggplot(aes(x = as.factor(degrees_awarded_predominant_recoded), y = earnings_4_yrs_after_completion_median, fill = as.factor(degrees_awarded_predominant_recoded))) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+The bar labeled "1" has the highest median earnings after 4 years, indicating that graduates from institutions predominantly awarding this category of degree earn more on average than those from other categories.
+The bar labeled "2" has lower median earnings than "1", suggesting that graduates from these institutions earn less on average.
+The bar labeled "3" also has significant median earnings, though not as high as "1", placing it in between "1" and "2".
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Example: Plot the average earnings for the top 10 states with the highest average tuition
+avg_data <- df %>%
+  group_by(state) %>%
+  summarize(average_tuition = mean(cost_tuition_in_state, na.rm = TRUE),
+            average_earnings = mean(earnings_1_yr_after_completion_median, na.rm = TRUE)) %>%
+  arrange(desc(average_tuition)) %>%
+  top_n(10)
+
+# Bar Plot with averages
+ggplot(avg_data, aes(x = reorder(state, average_tuition), y = average_earnings)) +
+  geom_col(fill = "steelblue") +
+  labs(x = "State", y = "Average Earnings 1 Year After Completion") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Average Tuition Costs vs. Average Median Earnings After 1 Year")
+
+```
+A taller bar indicates higher average median earnings in that state meaning MA has the highest average median earnings. While a shorter bar indicates lower earnings indicating the state ME has the lowest earnings.
+Policy and Decision Making: Such a plot can be useful for policymakers, students, and families when considering the return on investment for education in different states. It may influence decisions on where to attend college or university based on the balance of tuition costs and potential earnings.
+
+```{r}
+# Box Plot of Student Retention Rates by Carnegie Classification
+ggplot(df, aes(x = as.factor(carnegie_basic), y = student_retention_rate_four_year_full_time)) +
+  geom_boxplot() +
+  labs(x = "Carnegie Classification", y = "Student Retention Rate") +
+  theme_minimal() +
+  ggtitle("Student Retention Rates by Carnegie Classification")
+```
+Comparison Across Categories: By comparing the median lines and the spread of the boxes, one can see which Carnegie Classification categories have higher or lower median retention rates and how much variability there is within each category. Retention Challenges: Categories with lower medians and wider boxes may face greater challenges in student retention.
+Retention Success: Conversely, categories with higher medians and narrower boxes may indicate a more consistent retention performance.
+Policy Implications: The plot could be used by educational administrators to identify patterns in retention rates and target areas for improvement or further investigation
+
+Density Plots:
+Density plots for SAT scores and earnings after 1 year.
+```{r}
+df %>% 
+  select(admissions_sat_scores_average_overall, earnings_1_yr_after_completion_median) %>% 
+  gather(key = "variable", value = "value") %>%
+  ggplot(aes(x = value, fill = variable)) +
+  geom_density(alpha = 0.7) +
+  facet_wrap(~variable, scales = "free_x") +
+  theme_minimal()
+
+```
+SAT Scores (admissions_sat_scores_average_overall): The red density plot represents the distribution of average SAT scores across different institutions. The peak of the density plot indicates the most common range of SAT scores where the majority of students lie. If the peak is sharp and narrow, it suggests that most students' SAT scores are clustered around a particular value(i.e 1100), indicating less variability. If the peak is broad, it indicates more variability in SAT scores among students.
+
+Earnings After 1 Year (earnings_1_yr_after_completion_median): The blue density plot shows the distribution of median earnings of students one year after completing their education. Similar to the SAT scores, the peak shows the most common earnings range. A higher peak indicates that a specific earnings range is more prevalent among students.

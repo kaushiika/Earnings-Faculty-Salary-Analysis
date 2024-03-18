@@ -1,0 +1,165 @@
+---
+title: "optimizing tests"
+author: "Connor King"
+date: "2023-11-26"
+output: html_document
+---
+
+
+```{r}
+suppressMessages(library(tidyverse))
+
+df_final <- read_rds("modeling_df.rds")
+```
+
+General linear regression model is $$\boldsymbol{Y_{n\times 1}} = \boldsymbol{X_{n \times p}} \cdot \boldsymbol{\beta_{p \times 1}} + \boldsymbol{\epsilon_{n \times 1}}$$
+
+Where $Y$ is a vector of responses, $\beta$ is a vector of parameters, $X$ is a vector of constants, and $\epsilon$ is a vector of independent normal random variables with expectation $E[\epsilon] = 0$ and variance-covariance matrix $\boldsymbol{\sigma}^2[\epsilon] = \boldsymbol{\sigma}^2\cdot\boldsymbol{I}$
+
+## Gradient Descent Algorithm Used in Class
+
+```{r}
+gradient_descent <- function(f, theta0, step_scale, stopping_deriv, max_iter, ...) {
+  theta <- theta0
+  
+  for (i in 1:max_iter) {
+    gradient <- numDeriv::grad(f, theta, ...)
+    if(any(is.na(gradient))) {
+      warning("NA values in gradient")
+      break
+    }
+    
+    if(all(abs(gradient) < stopping_deriv)) {
+      break()
+    }
+    theta <- theta - step_scale * gradient
+  }
+  if (i == max_iter) {
+    warning("Maximal number of iterations reached, convergence not assured")
+  }
+  fit <- 
+    list(
+      argmin = theta,
+      final_gradient = gradient,
+      final_value = f(theta, ...),
+      iterations = i,
+      theta0 = theta0,
+      step_scale = step_scale,
+      stopping_deriv = stopping_deriv
+      )
+  return(fit)
+}
+```
+
+## Least Squares Estimators
+
+The least squares criterion for multiple regression is $$Q = \sum_{i=1}^{n} (Y_i - (\beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2} + \ldots + \beta_{p-1} X_{i,p-1}))^2$$ the least squares estimators are those values of $\beta_0, \dots, \beta_{p-1}$ that minimize Q
+
+```{r}
+
+MSE_multiple_regression <- function(b, Y, X){
+  X <- cbind(1, X)
+  
+  Y_pred <- X %*% b
+  
+  resid <- Y - Y_pred
+  
+  return(mean(resid^2))
+}
+
+```
+
+```{r}
+df_final$rank_ind_numeric <- as.numeric(as.character(df_final$rank_ind))
+
+indp_vars <- as.matrix((df_final %>% select(
+  adm_rate,
+  student_size,
+  faculty_salary,
+  ft_faculty_rate,
+  rank_ind_numeric,
+  student_fac_ratio,
+  tuition_revenue_per_fte,
+  instructional_expenditure_per_fte
+)))
+
+Y_4yr_median <- as.matrix(df_final$median_earnings_4yr)
+
+theta0_0_4yr <- rep(0.1, ncol(indp_vars) + 1)
+
+b_multiple_GD <-
+  gradient_descent(
+    f = MSE_multiple_regression,
+    theta0 = theta0_0_4yr,
+    step_scale = 1e-5,
+    stopping_deriv = 1e-4,
+    max_iter = 10000,
+    Y = Y_4yr_median,
+    X = indp_vars
+    )
+
+b_multiple_GD
+```
+
+Compare to `lm()`
+
+```{r}
+coef(lm(median_earnings_4yr ~ adm_rate + student_size + faculty_salary + ft_faculty_rate + rank_ind_numeric + student_fac_ratio +  tuition_revenue_per_fte + instructional_expenditure_per_fte, data = df_final))
+```
+
+## Feature Scaling
+
+Standardizing the independent variables except for the indicator variable `rank_ind_numeric`
+
+```{r}
+normalize <- function(x) {
+  return((x - mean(x)) / sd(x))
+}
+
+continuous_indp_vars <- df_final %>% select(
+  adm_rate,
+  student_size,
+  faculty_salary,
+  ft_faculty_rate,
+  student_fac_ratio,
+  tuition_revenue_per_fte,
+  instructional_expenditure_per_fte
+)
+
+scaled_indp_vars <- as.data.frame(lapply(continuous_indp_vars, normalize))
+scaled_indp_vars$rank_id_numeric <- df_final$rank_ind_numeric
+scaled_indp_vars <- as.matrix(scaled_indp_vars)
+
+```
+
+Now we have an $X$ matrix with scaled independent variables excluding the indicator variable. Now I will continue attempting what I was doing earlier
+
+```{r}
+theta0_scaled <- c(50000, 650, 200, 8000, -750, 500, -1000, 2250, 500)
+
+b_multiple_GD <-
+  gradient_descent(
+    f = MSE_multiple_regression,
+    theta0 = theta0_scaled,
+    step_scale = 1e-6,
+    stopping_deriv = 1e-4,
+    max_iter = 10000,
+    Y = Y_4yr_median,
+    X = scaled_indp_vars
+    )
+
+b_multiple_GD
+```
+
+Compared with `lm()` with scaled variables
+
+```{r}
+scaled_df <- as.data.frame(cbind(scaled_indp_vars, Y_4yr_median))
+
+coef(lm(V9 ~ adm_rate + student_size + faculty_salary + ft_faculty_rate + rank_id_numeric + student_fac_ratio +  tuition_revenue_per_fte + instructional_expenditure_per_fte, data = scaled_df))
+```
+
+
+
+
+

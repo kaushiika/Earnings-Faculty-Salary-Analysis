@@ -1,0 +1,208 @@
+---
+title: "535 Final EDA"
+author: "Connor King"
+date: "2023-11-24"
+output: html_document
+---
+
+```{r}
+suppressMessages(library(tidyverse))
+
+df <- readRDS("scorecard_df.rds")
+```
+
+## Correlation Plot
+
+Glancing at quick correlations between the some of the variables
+
+```{r, warning = FALSE}
+library(corrplot)
+
+df$carnegie_size_setting <- as.integer(df$carnegie_size_setting)
+df$carnegie_undergrad <- as.integer(df$carnegie_undergrad)
+df$carnegie_basic <- as.integer(df$carnegie_basic)
+
+corr_plot_data <- df %>% 
+  select(earnings_4_yrs_after_completion_median, 
+         earnings_1_yr_after_completion_median, 
+         faculty_salary, 
+         ft_faculty_rate, 
+         earnings_1_yr_after_completion_not_working_not_enrolled_overall_count,
+         admissions_sat_scores_average_overall,
+         student_demographics_student_faculty_ratio,
+         carnegie_size_setting, carnegie_undergrad, carnegie_basic,
+         student_size,
+         tuition_revenue_per_fte,
+         instructional_expenditure_per_fte,
+         aid_loan_principal,
+         student_retention_rate_four_year_full_time,
+         rank,
+         degrees_awarded_predominant_recoded
+        
+         ) #student_enrollment_all, cost_avg_net_price_private causing errors
+
+corr_matrix <- cor(corr_plot_data, use = "pairwise.complete.obs") #ignores any na's between the 2 pairwise variables being compared
+
+#creating the correlation plot and saving it as a png
+
+corrplot(corr_matrix, 
+         method = "color",  
+         type = "upper", 
+         order = "hclust",
+         diag = TRUE,
+         addCoef.col = TRUE,
+         number.cex = 0.55,
+         tl.srt = 60,
+         tl.cex = 0.4)
+
+```
+
+## NA values
+
+```{r}
+library(naniar)
+library(visdat)
+
+gg_miss_var(df)
+```
+
+```{r}
+vis_dat(df)
+```
+From these plots we can see that some variables have a large value of NAs, notably SAT admissions. Since the dataframe is ordered by state, it appears that some of the NAs in variables are not independent indicating that some schools in certain states have missing values for some variables.
+
+## Bar plots
+
+### Comparing States
+
+```{r}
+df_long <- df %>% 
+  pivot_longer( 
+               cols = c("earnings_4_yrs_after_completion_median", 'earnings_1_yr_after_completion_median'),
+               names_to = "earnings_type",
+               values_to = "earnings_value")
+
+df_long %>% 
+  ggplot(aes(x = state, y = earnings_value, fill = earnings_type)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip()
+```
+
+### Comparing Online Only
+
+```{r}
+df_long %>% 
+  ggplot(aes(x = online_only, y = earnings_value, fill = earnings_type)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip()
+```
+### Comparing Carnegie Metrics
+
+```{r}
+df_long %>% 
+  ggplot(aes(x = carnegie_basic, y = earnings_value, fill = earnings_type)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip()
+```
+```{r}
+df_long %>% 
+  ggplot(aes(x = carnegie_size_setting, y = earnings_value, fill = earnings_type)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip()
+```
+
+```{r}
+df_long %>% 
+  ggplot(aes(x = carnegie_undergrad, y = earnings_value, fill = earnings_type)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip()
+```
+
+## Scatter Plots
+
+### Faculty Salary
+
+```{r}
+df %>% 
+  ggplot(aes(x = faculty_salary, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "blue") +
+  geom_smooth(method = "lm", color = "darkgreen")
+```
+
+```{r}
+df %>% 
+  ggplot(aes(x = faculty_salary, y = earnings_1_yr_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "red") +
+  geom_smooth(method = "lm", color = "darkgreen")
+```
+
+### SAT Scores
+
+```{r}
+df %>% 
+  ggplot(aes(x = admissions_sat_scores_average_overall, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "blue") +
+  geom_smooth(method = "lm", color = "green")
+```
+Note that a significant portion of the data was removed. 5527 rows were removed out of 6543.
+
+```{r}
+df %>% 
+  ggplot(aes(x = admissions_sat_scores_average_overall, y = earnings_1_yr_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "red") +
+  geom_smooth(method = "lm", color = "green")
+```
+### Admissions Rate
+
+```{r}
+df %>% 
+  ggplot(aes(x = admissions_admission_rate_overall, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "blue") +
+  geom_smooth(method = "lm", color = "green")
+```
+```{r}
+df %>% 
+  ggplot(aes(x = admissions_admission_rate_overall, y = earnings_1_yr_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "red") +
+  geom_smooth(method = "lm", color = "green")
+```
+## Aid Loan
+
+```{r}
+df %>% 
+  ggplot(aes(x = aid_loan_principal, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "blue") +
+  geom_smooth(method = "lm", color = "green")
+```
+```{r}
+df %>% 
+  ggplot(aes(x = aid_loan_principal, y = earnings_1_yr_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "red") +
+  geom_smooth(method = "lm", color = "green")
+```
+
+## Rank
+
+```{r}
+df %>% 
+  ggplot(aes(x = rank, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "blue") +
+  geom_smooth(method = "lm", color = "green")
+```
+```{r}
+df %>% 
+  ggplot(aes(x = rank, y = earnings_4_yrs_after_completion_median)) +
+  geom_point(alpha = 0.2, color = "red") +
+  geom_smooth(method = "lm", color = "green")
+```
+
+
+
+
+
+
+
+
+
+
+

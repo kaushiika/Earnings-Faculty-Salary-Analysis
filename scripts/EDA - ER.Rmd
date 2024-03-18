@@ -1,0 +1,963 @@
+---
+title: "EDA - ER"
+output: html_document
+date: "2023-11-25"
+---
+
+```{r setup, include=FALSE}
+# Load Libraries ----
+libs <- c("dplyr", "ggplot2", "tidyr", "extrafont", "readr",
+          "ggokabeito", "tibble", "stringr")
+
+invisible(lapply(libs, library, character.only = TRUE))
+
+# Set Theme ----
+font_import()
+
+theme_new <- function() {
+  theme_minimal(base_family = "Jost") +
+    theme(panel.grid.minor = element_blank(),
+          plot.title = element_text(family = "Jost", face = "bold"),
+          axis.title = element_text(family = "Jost Medium"),
+          strip.text = element_text(family = "Jost", face = "bold",
+                                    size = rel(1), hjust = 0),
+          strip.background = element_rect(fill = NA, color = NA))
+}
+
+theme_set(theme_new())
+
+options(ggplot2.discrete.colour= palette_okabe_ito())
+options(ggplot2.discrete.fill= palette_okabe_ito())
+
+# Load Data ----
+df_raw <- read_rds("data/scorecard_df.rds")
+```
+
+# NA Values
+
+Initial look at dataset:
+
+```{r}
+dim(df_raw) # 6543 x 36
+glimpse(df_raw)
+
+# Function for looking at NA values
+get_nas <- function(data){
+  tibble(
+    field = names(data), 
+    na_counts = unlist(lapply(data, function(x) sum(is.na(x)))),
+    na_pcts = unlist(lapply(data, function(x) sum(is.na(x))))/nrow(data)
+  ) |>
+  arrange(desc(na_pcts))
+}
+
+get_nas(df_raw) |>
+  print(n=100)
+```
+
+Obviously there are a ton of NA values here. I suggest we drop the fields with over 80% NA values (and we can adjust the `rank` field to be an indicator without NA values).
+
+```{r}
+df_filt <- df_raw |>
+  mutate(rank_ind = ifelse(is.na(rank), 0, 1)) |>
+  select(-student_enrollment_all, -admissions_sat_scores_average_overall, -rank)
+
+# How many non-NA rows do we now have?
+df_filt |>
+  drop_na() |>
+  nrow() # 0! 
+
+get_nas(df_filt)
+```
+
+I want to know whether NAs are clustered within certain types of colleges/universities. 
+
+```{r}
+# Operating/Non-Operating
+count(df_filt, operating) # 191 non-operational cases
+get_nas(df_filt[df_filt$operating == 0,]) # High pct of NAs in non-operational
+get_nas(df_filt[df_filt$operating == 1,])
+
+# Recommendation: remove non-operational cases
+df_filt <- df_filt |>
+  filter(operating == 1)
+
+get_nas(df_filt)
+```
+
+Next look at ownership:
+
+```{r}
+count(df_filt, ownership_label)
+
+get_nas(df_filt[df_filt$ownership == 1,]) # Public
+get_nas(df_filt[df_filt$ownership == 2,]) # Private NFP
+get_nas(df_filt[df_filt$ownership == 3,]) # Private FP
+```
+
+It looks like public schools have the smallest share of NAs, followed by private NFP and then private FP. Average cost for public is all NA for private schools, and vice versa for average cost for private. Perhaps we can just combine these two fields? 
+
+```{r}
+df_filt <- df_filt |>
+  mutate(
+    avg_cost_comb = ifelse(is.na(cost_avg_net_price_public),
+                           cost_avg_net_price_private, 
+                           cost_avg_net_price_public)
+  ) |>
+  select(-cost_avg_net_price_public, -cost_avg_net_price_private)
+
+sum(is.na(df_filt$avg_cost_comb))/nrow(df_filt) # better but still lots of NAs
+```
+
+What about online-only vs not?
+
+```{r}
+count(df_filt, online_only) # very few online only to begin with
+
+get_nas(df_filt[df_filt$online_only == TRUE,]) # High percentages of NA values
+get_nas(df_filt[df_filt$online_only == FALSE,])
+```
+
+Main campus vs not?
+
+```{r}
+count(df_filt, main_campus)
+
+get_nas(df_filt[df_filt$main_campus == TRUE,])
+get_nas(df_filt[df_filt$main_campus == FALSE,]) # More NAs for non-main campuses
+```
+
+So what if we filtered out online-only and non-main-campus schools?
+
+```{r}
+df_filt <- df_filt |>
+  filter(main_campus == TRUE,
+         online_only == FALSE)
+
+get_nas(df_filt) # Somewhat better
+```
+
+How about by state? Do reporting requirements differ state to state?
+
+```{r}
+state_counts <- count(df_filt, state, sort = TRUE)
+
+# Calculate the proportion of 'clean' (non-na-containing) rows
+# by state
+non_na_pcts <- lapply(state_counts$state,
+       function(x) nrow(drop_na(filter(df_filt, state == x))) / 
+         nrow(filter(df_filt, state == x))) |>
+  unlist()
+
+state_counts$non_na_pct <- non_na_pcts
+state_counts |>
+  arrange(desc(non_na_pct))
+# There's a lot of variability here
+```
+
+Let's consider dropping some fields we may not want and check again. Look first at potential response variables - different measures of student outcomes.
+
+```{r}
+# Possible response variables
+sum(is.na(df_filt$earnings_4_yrs_after_completion_median))/nrow(df_filt) # 16%
+sum(is.na(df_filt$earnings_1_yr_after_completion_median))/nrow(df_filt) # 14%
+sum(is.na(df_filt$student_retention_rate_four_year_full_time))/nrow(df_filt) # 63%
+sum(is.na(df_filt$completion_completion_rate_4yr_100nt))/nrow(df_filt) # 64%
+sum(is.na(df_filt$completion_completion_rate_4yr_150nt))/nrow(df_filt) # 59%
+
+# How do these look across the carnegie categories? 
+pct_na <- lapply(
+  unique(df_filt$carnegie_basic_label),
+  function(x) sum(
+    is.na(
+      filter(df_filt, carnegie_basic_label == x)$completion_completion_rate_4yr_150nt)) /
+      nrow(filter(df_filt, carnegie_basic_label == x)
+    )
+) |>
+  unlist()
+
+tibble(unique(df_filt$carnegie_basic_label),
+       pct_na) |>
+  arrange(desc(pct_na)) |>
+  print(n=100)
+
+# There appears to be a drastic dropoff in NAs once we move from special focus and
+# associates colleges to Masters/Doctoral/Baccalaureate
+
+# What if we look at retention rate?
+pct_na <- lapply(
+  unique(df_filt$carnegie_basic_label),
+  function(x) sum(
+    is.na(
+      filter(df_filt, carnegie_basic_label == x)$student_retention_rate_four_year_full_time)) /
+      nrow(filter(df_filt, carnegie_basic_label == x)
+    )
+) |>
+  unlist()
+
+tibble(unique(df_filt$carnegie_basic_label),
+       pct_na) |>
+  arrange(desc(pct_na)) |>
+  print(n=100)
+
+# Similar drop-off, but some of the Baccalaureate/Associates have high NA pcts
+
+# What about the cases where the carnegie classification is missing?
+df_filt |>
+  filter(carnegie_basic_label %in% c("Not Applicable", "<NA>")) |>
+  get_nas() |>
+  print(n=100)
+
+# These schools are missing quite a lot
+```
+
+How many schools would we have if we removed the Special Focus/Associates cases, as well as those missing a Carnegie classification?
+
+```{r}
+df_filt <- df_filt |>
+  filter(carnegie_basic %in% 14:23)
+
+df_filt |> 
+  nrow() #1703 - actually not terrible
+
+get_nas(df_filt)
+
+df_filt |>
+  drop_na() |>
+  nrow()
+```
+
+I think this might be a manageable number of NA values to deal with, giving us 1342 complete data points *if* we want to keep all variables (which we probably don't) - so after removing some, we might have more complete cases. 
+
+To summarize, we have applied the following filters to the original dataset:
+
+* Removed non-operating schools
+* Removed online-only schools
+* Removed schools that are not main campuses
+* Removed schools whose Carnegie classification is 'Special Focus' as well as Associate's Colleges, primarily because they have high proportions of NA values for key variables. 
+
+```{r}
+# I'm going to convert the Carnegie Basic field into a simpler factor variable, and also add an indicator for the exclusively grad/professional schools
+df_filt <- df_filt |>
+  mutate(
+    school_type = case_when(
+      carnegie_basic %in% 15:17 ~ "Doctoral",
+      carnegie_basic %in% 18:20 ~ "Masters",
+      carnegie_basic %in% c(14, 21:23) ~ "Baccalaureate"
+    ),
+    excl_grad_prof = ifelse(carnegie_size_setting_label == "Exclusively graduate/professional", 1, 0)
+  )
+
+df_filt |>
+  count(school_type)
+```
+
+Create a new data frame removing some now-extraneous fields
+
+```{r}
+df <- df_filt |>
+  select(university, 
+         # Possible response variables
+         completion_completion_rate_4yr_100nt,
+         completion_completion_rate_4yr_150nt,
+         earnings_4_yrs_after_completion_median,
+         earnings_1_yr_after_completion_median,
+         student_retention_rate_four_year_full_time,
+         # Possible predictors
+         state, ownership_label,
+         admissions_admission_rate_overall,
+         student_size, faculty_salary, ft_faculty_rate,
+         student_demographics_student_faculty_ratio,
+         tuition_revenue_per_fte, instructional_expenditure_per_fte,
+         school_type, excl_grad_prof,
+         rank_ind, avg_cost_comb,
+         carnegie_basic_label,
+         carnegie_size_setting_label) |>
+  as_tibble()
+```
+
+# Univariate Analysis
+
+I'm going to check the distributions of some of these variables, starting with the potential response variables.
+
+```{r}
+plot_hist <- function(data = df, var, n_bins = 30){
+  
+  mean <- mean(select(data, {{ var }})[[1]], na.rm = TRUE)
+  median <- median(select(data, {{ var }})[[1]], na.rm = TRUE)
+  
+  
+  data |> 
+    ggplot(aes(x = {{ var }})) +
+    geom_histogram(bins = n_bins,
+                   color = 'grey15',
+                   fill = palette_okabe_ito(1), 
+                   alpha = .7) +
+    ggtitle(aes({{ var }})) +
+    labs(subtitle = str_c("Mean: ", round(mean, digits = 2), 
+                          "  Median: ", round(median, digits = 2))) +
+    geom_vline(xintercept = mean, linetype = "dashed", 
+               color = palette_okabe_ito(6), lwd = 1.1)
+}
+
+plot_hist(var = completion_completion_rate_4yr_100nt) 
+# range is 0-1, fairly symmetric, mean 0.43
+plot_hist(var = completion_completion_rate_4yr_150nt) 
+# also symmetric 0-1, mean 0.55
+
+plot_hist(var = student_retention_rate_four_year_full_time)
+# range 0-1, left skewed, mean 0.73, median 0,74
+
+plot_hist(var = earnings_4_yrs_after_completion_median)
+# Right skewed, mean ~ 50k, median ~48k
+plot_hist(var = earnings_1_yr_after_completion_median)
+# Right skewed, mean ~40k, median ~39k
+
+# What does a log transformation for earnings look like?
+df <- df |>
+  mutate(log_4yr_earnings = log2(earnings_4_yrs_after_completion_median),
+         log_1yr_earnings = log2(earnings_1_yr_after_completion_median))
+
+plot_hist(var = log_4yr_earnings)
+# Now symmetric, mean 15.6
+plot_hist(var = log_1yr_earnings)
+# Actually slightly left skewed now, mean 15.25
+```
+
+My instinct wrt to earnings is to use 4 yr earnings rather than 1 yr, since that feels like a more realistic indicator of whether students are finding success (lots of successful graduates take over a year to figure out their next step, I think). We might want to consider a log transformation here. The other variables are all rates between 0 and 1, and so if we want to model these we will have to look beyond linear regression (maybe beta regression? Could be interesting...)
+
+Next let's look at the distributions of the possible predictors.
+
+```{r}
+plot_hist(var = admissions_admission_rate_overall)
+sum(is.na(df$admissions_admission_rate_overall)) # 307 NAs, most of any remaining field
+# Left skewed, mean 0.72, median 0.77
+
+plot_hist(var = student_size)
+# Highly skewed, let's try a transformation
+df <- df |>
+  mutate(log_enroll = ifelse(student_size == 0, 0, log2(student_size)))
+
+plot_hist(var = log_enroll)
+
+plot_hist(var = faculty_salary) 
+# Also skewed, mean 8100, median 7700
+df <- df |>
+  mutate(log_salary = ifelse(faculty_salary == 0, 0, log2(faculty_salary)))
+
+plot_hist(var = log_salary)
+# More symmetric, but now has long left tail
+```
+
+```{r}
+plot_hist(var = ft_faculty_rate)
+# Large number of schools with 100% full time faculty - I didn't expect that!
+
+# Closer look at the 100% FT schools
+df |>
+  filter(ft_faculty_rate == 1) |>
+  count(school_type) |>
+  mutate(pct = scales::percent(n/sum(n), .1))
+# Mixture of school types
+
+# Same, but as a percentage of total schools for each type
+df |>
+  group_by(school_type) |>
+  summarize(n = n(),
+            ftt_rate_1 = sum(ft_faculty_rate == 1, na.rm = TRUE),
+            pct = ftt_rate_1 / n)
+# Highest rates for BA and Masters programs
+
+# Look at public/private split
+df |>
+  filter(ft_faculty_rate == 1) |>
+  count(ownership_label) |>
+  mutate(pct = scales::percent(n/sum(n), .1))
+# Mostly private NP, very few private FP
+
+# As a percentage of total by category
+df |>
+  group_by(ownership_label) |>
+  summarize(n = n(),
+            ftt_rate_1 = sum(ft_faculty_rate == 1, na.rm = TRUE),
+            pct = ftt_rate_1 / n)
+# Highest rate is private NP
+
+# By schools in top 1000/not in top 1000
+df |>
+  filter(ft_faculty_rate == 1) |>
+  count(rank_ind) |>
+  mutate(pct = scales::percent(n/sum(n), .1))
+
+df |>
+  group_by(rank_ind) |>
+  summarize(n = n(),
+            ftt_rate_1 = sum(ft_faculty_rate == 1, na.rm = TRUE),
+            pct = ftt_rate_1 / n)
+
+# Actually a higher proportion of non-top 1000 schools have 100% FT Faculty
+```
+
+```{r}
+plot_hist(var = student_demographics_student_faculty_ratio)
+# Seems like there's maybe one or two extreme outliers?
+
+df |>
+  filter(student_demographics_student_faculty_ratio > 50) |>
+  select(university, carnegie_basic_label, carnegie_size_setting_label)
+# A single case, University of Phoenix - Arizona
+
+plot_hist(data = filter(df, student_demographics_student_faculty_ratio < 50),
+          var = student_demographics_student_faculty_ratio)
+```
+
+```{r}
+plot_hist(var = tuition_revenue_per_fte)
+plot_hist(var = instructional_expenditure_per_fte)
+# Right skewed, mean ~11k, median 9k
+
+# Which schools spend over 50000 per fte?
+df |>
+  filter(instructional_expenditure_per_fte > 50000) |>
+  pull(university)
+# That list makes sense - super elite universities
+
+# How is it that one school has 0 expenditure per fte?
+df |>
+  filter(instructional_expenditure_per_fte == 0) |>
+  pull(university)
+# thomas edison state university
+
+# look at a logged version
+df <- df |>
+  mutate(log_expend_per_fte = ifelse(instructional_expenditure_per_fte == 0, 0, log2(instructional_expenditure_per_fte)))
+
+plot_hist(var = log_expend_per_fte)  
+```
+
+```{r}
+plot_hist(var = avg_cost_comb)
+# Right-skewed
+```
+
+# Multivariate Analysis
+
+```{r}
+# Change rank indicator to a factor
+df <- df |>
+  mutate(rank_ind = factor(rank_ind))
+```
+
+## Categorical Variables
+
+Let's start with the categorical variables. I'll look at how ownership (public, private), school type, and the top1000 indicator interact with the possible outcome variables. 
+
+```{r}
+# Ownership label 
+df |>
+  group_by(ownership_label) |>
+  summarize(
+    n = n(),
+    mean_earn = mean(earnings_4_yrs_after_completion_median, na.rm = TRUE),
+    median_earn = median(earnings_4_yrs_after_completion_median, na.rm = TRUE),
+    mean_compl = mean(completion_completion_rate_4yr_150nt, na.rm = TRUE),
+    median_compl = median(completion_completion_rate_4yr_150nt, na.rm = TRUE),
+    mean_ret = mean(student_retention_rate_four_year_full_time, na.rm = TRUE),
+    median_ret = median(student_retention_rate_four_year_full_time, na.rm = TRUE)
+  )
+```
+
+There's only 56 observations for private for-profit, but there are some pretty clear differences nonetheless: lower retention rates, lower completion rates, and possibly lower median earnings. Public and PNP are much closer, with PNP having (perhaps) higher completion rates. 
+
+```{r}
+# School type
+df |>
+  group_by(school_type) |>
+  summarize(
+    n = n(),
+    mean_earn = mean(earnings_4_yrs_after_completion_median, na.rm = TRUE),
+    median_earn = median(earnings_4_yrs_after_completion_median, na.rm = TRUE),
+    mean_compl = mean(completion_completion_rate_4yr_150nt, na.rm = TRUE),
+    median_compl = median(completion_completion_rate_4yr_150nt, na.rm = TRUE),
+    mean_ret = mean(student_retention_rate_four_year_full_time, na.rm = TRUE),
+    median_ret = median(student_retention_rate_four_year_full_time, na.rm = TRUE)
+  )
+```
+
+From BA to Doctoral there's an increase in mean earnings, completion, and retention. 
+
+```{r}
+# Rank indicator 
+df |>
+  group_by(rank_ind) |>
+  summarize(
+    n = n(),
+    mean_earn = mean(earnings_4_yrs_after_completion_median, na.rm = TRUE),
+    median_earn = median(earnings_4_yrs_after_completion_median, na.rm = TRUE),
+    mean_compl = mean(completion_completion_rate_4yr_150nt, na.rm = TRUE),
+    median_compl = median(completion_completion_rate_4yr_150nt, na.rm = TRUE),
+    mean_ret = mean(student_retention_rate_four_year_full_time, na.rm = TRUE),
+    median_ret = median(student_retention_rate_four_year_full_time, na.rm = TRUE)
+  )
+```
+
+Schools flagged as top 1000 appear to be associated with higher median earnings, higher completion rates, and higher retention rates. 
+
+Some visualizations:
+
+```{r}
+# Faceting earnings by school type and ownership
+df |>
+  ggplot(
+    aes(x = earnings_4_yrs_after_completion_median)
+  ) +
+  geom_histogram(
+    aes(fill = ownership_label),
+    alpha = 0.5,
+    show.legend = FALSE
+  ) +
+  facet_grid(ownership_label ~ school_type, scales = "free_y", margin = TRUE)
+
+# Same but for completion rates
+df |>
+  ggplot(
+    aes(x = completion_completion_rate_4yr_150nt)
+  ) +
+  geom_histogram(
+    aes(fill = ownership_label),
+    alpha = 0.5,
+    show.legend = FALSE
+  ) +
+  facet_grid(ownership_label ~ school_type, scales = "free_y", margin = TRUE)
+
+# And retention rates
+df |>
+  ggplot(
+    aes(x = student_retention_rate_four_year_full_time)
+  ) +
+  geom_histogram(
+    aes(fill = ownership_label),
+    alpha = 0.5,
+    show.legend = FALSE
+  ) +
+  facet_grid(ownership_label ~ school_type, scales = "free_y", margin = TRUE)
+```
+
+```{r}
+# Rank Index
+df |>
+  select(
+    university,
+    rank_ind,
+    student_retention_rate_four_year_full_time,
+    completion_completion_rate_4yr_150nt
+  ) |>
+  pivot_longer(cols = student_retention_rate_four_year_full_time:completion_completion_rate_4yr_150nt) |>
+  ggplot(
+    aes(x = value)
+  ) +
+  geom_density(
+    aes(fill = rank_ind),
+    alpha = 0.5,
+    color = 'grey15',
+    show.legend = TRUE
+  ) +
+  facet_wrap(~name, ncol = 1, scales = "free_x")
+
+df |>
+  ggplot(
+    aes(x = earnings_4_yrs_after_completion_median)
+  ) + 
+  geom_density(aes(fill = rank_ind), alpha = 0.7)
+```
+
+Some clear differences between the top1000 schools and the rest across all outcomes. 
+
+Overall, I'm convinced that these three categorical variables are worth including in our models. 
+
+## Continuous Variables
+
+Next look at continuous variables:
+
+```{r}
+corr_plot_df <- df |>
+  select(where(is.numeric) & !starts_with("log")) |>
+  select(-excl_grad_prof, -completion_completion_rate_4yr_100nt,
+         -earnings_1_yr_after_completion_median) |>
+  drop_na() 
+
+names(corr_plot_df) <- str_trunc(names(corr_plot_df), 30)
+
+corr_plot_df |>
+  cor() |>
+  ggcorrplot::ggcorrplot(lab = TRUE, type = "lower")
+```
+
+* Faculty salary is correlated with retention rate, completion rate, and  earnings (~.6-.7), weakly correlated with school enrollment and weakly negatively correlated with admissions rate (more selective schools pay their faculty more). 
+* Student faculty ratio is correlated with student enrollment (~0.5).
+* Unfortunately, the full-time faculty rate doesn't appear to be correlated with any of our outcomes. Should check if this is true after stratifying by school type/ownership.
+* Tuition revenue per FT equivalent student is correlated with completion rate, earnings, and retention rate. It's also correlated with several predictors: negatively correlated with admissions rate and student faculty ratio, and positively correlated with faculty salary. 
+* Instructional expenditures per FTE equivalent is correlated with earnings, completion, and retention, as well as faculty salary, and negatively correlated with admissions rate. 
+* Average cost is weakly correlated with completion rate (?), negatively correlated with student faculty ratio.
+
+```{r}
+# Function to quickly plot some scatters
+plot_scatter <- function(data = df, x, y, 
+                         add_color = TRUE, colorvar = ownership_label){
+  plt <- data |>
+    ggplot(aes(x = {{ x }}, y = {{ y }})) +
+    ggtitle(aes(paste({{ x }}, {{ y }})))
+  
+  if(add_color == TRUE){
+    plt +
+    geom_point(
+      aes(
+        color = {{ colorvar }}
+      ),
+      alpha = 0.7
+    ) +
+    geom_smooth(method = "lm", se = FALSE, aes(color = {{ colorvar }}))
+    
+  } else{
+    plt +
+    geom_point(
+      alpha = 0.7
+    ) +
+    geom_smooth(method = "lm", se = FALSE)
+  }
+}
+```
+
+### Faculty Salary
+
+Look at faculty salary:
+
+```{r}
+# ...and student income ----
+plot_scatter(
+  x = faculty_salary,
+  y = earnings_4_yrs_after_completion_median
+)
+
+plot_scatter(
+  x = log_salary,
+  y = log_4yr_earnings
+)
+# Positive relationship, strongest for private np weakest for private fp 
+
+plot_scatter(
+  data = df,
+  x = faculty_salary,
+  y = earnings_4_yrs_after_completion_median,
+  colorvar = rank_ind
+)
+# Steeper slope for top1000 schools
+
+plot_scatter(
+  data = df,
+  x = faculty_salary,
+  y = earnings_4_yrs_after_completion_median,
+  colorvar = school_type
+)
+
+# ...and completion rates ----
+
+plot_scatter(
+  x = faculty_salary, 
+  y = completion_completion_rate_4yr_150nt
+)
+# hah, negative slope on for-profit schools
+
+plot_scatter(
+  x = log_salary, 
+  y = completion_completion_rate_4yr_150nt
+)
+
+# and retention rates...
+
+plot_scatter(
+  x = log_salary, 
+  y = student_retention_rate_four_year_full_time
+)
+# Flat relationship fro private fp
+```
+
+I think faculty salary is clearly a predictor we should use, and it seems to interact in some interesting ways with our other categorical predictors. 
+
+### Admissions Rates
+
+```{r}
+plot_scatter(
+  x = admissions_admission_rate_overall,
+  y = earnings_4_yrs_after_completion_median,
+  add_color = FALSE
+)
+# Maybe a weak negative relationship
+
+plot_scatter(
+  x = admissions_admission_rate_overall,
+  y = earnings_4_yrs_after_completion_median
+)
+
+plot_scatter(
+  x = admissions_admission_rate_overall,
+  y = log_4yr_earnings
+)
+# No clear relationship
+
+plot_scatter(
+  x = admissions_admission_rate_overall,
+  y = completion_completion_rate_4yr_150nt
+)
+# Looks like a negative relationship between admission rate and completion
+
+plot_scatter(
+  x = admissions_admission_rate_overall,
+  y = student_retention_rate_four_year_full_time
+)
+# Maybe a weak relationship with retention
+```
+
+It looks like admission rates don't have much of a relationship with earnings, and weak negative relationships with completion/retention. This field also has the highest number of NA values. I'm not sure whether we want to use this or not.
+
+### FT Faculty Rate
+
+```{r}
+plot_scatter(
+  x = ft_faculty_rate,
+  y = earnings_4_yrs_after_completion_median
+)
+
+plot_scatter(
+  x = ft_faculty_rate,
+  y = earnings_4_yrs_after_completion_median,
+  colorvar = school_type
+)
+# No clear relationship
+# Maybe different trends for Baccalaureate/Doctoral vs Masters?
+
+df |> 
+  filter(school_type %in% c("Doctoral", "Baccalaureate")) |>
+  select(earnings_4_yrs_after_completion_median,
+         ft_faculty_rate) |>
+  drop_na() |>
+  cor()
+# Still doesn't seem like much of a relationship
+
+plot_scatter(
+  data = mutate(df, rank_ind = factor(rank_ind)),
+  x = ft_faculty_rate,
+  y = earnings_4_yrs_after_completion_median,
+  colorvar = rank_ind
+)
+
+plot_scatter(
+  x = ft_faculty_rate,
+  y = completion_completion_rate_4yr_150nt,
+  add_color = FALSE
+)
+
+plot_scatter(
+  x = ft_faculty_rate,
+  y = student_retention_rate_four_year_full_time,
+  add_color = FALSE
+)
+# Maybe some very weak positive relationships with completion/retention
+```
+
+This was one of the main fields I was interested in for this dataset. My instinct is that it's *really bad* when schools have high proportions of part time (adjunct) faculty, and I thought this would show up in one of our outcome measures. The fact that there is not much of a relationship is really surprising - but I also wonder if there's something here that I'm failing to understand. Like what's up with all these schools with 100% FTF rates? 
+
+```{r}
+# Just out of curiosity, what if we removed the 100% FTF cases
+plot_scatter(
+  data = filter(df, !ft_faculty_rate == 1),
+  x = ft_faculty_rate,
+  y = earnings_4_yrs_after_completion_median,
+  add_color = FALSE
+)
+# Still not much
+```
+
+I think I would still like to keep the FTF rate in our model, not because I think it will have a significant effect but because it *doesn't* have a significant effect, and this is surprising. 
+
+### Student Faculty Ratio
+
+```{r}
+plot_scatter(
+  data = filter(df, student_demographics_student_faculty_ratio < 50),
+  x = student_demographics_student_faculty_ratio,
+  y = earnings_4_yrs_after_completion_median,
+  add_color = FALSE
+)
+# Weak negative relationship
+
+plot_scatter(
+  data = filter(df, student_demographics_student_faculty_ratio < 50),
+  x = student_demographics_student_faculty_ratio,
+  y = completion_completion_rate_4yr_150nt,
+  add_color = FALSE
+)
+# Also negative relationship
+
+plot_scatter(
+  data = filter(df, student_demographics_student_faculty_ratio < 50),
+  x = student_demographics_student_faculty_ratio,
+  y = student_retention_rate_four_year_full_time,
+  add_color = FALSE
+)
+# Weak negative relationship
+```
+
+Across all response variables, seems like a weakish negative relationship with student faculty ratios - which makes sense. 
+
+```{r}
+plot_scatter(
+  data = filter(df, student_demographics_student_faculty_ratio < 50),
+  x = student_demographics_student_faculty_ratio,
+  y = completion_completion_rate_4yr_150nt,
+  add_color = TRUE,
+  colorvar = rank_ind
+)
+# Slope is much steeper for the top1000 schools
+
+plot_scatter(
+  data = filter(df, student_demographics_student_faculty_ratio < 50),
+  x = student_demographics_student_faculty_ratio,
+  y = completion_completion_rate_4yr_150nt,
+  add_color = TRUE,
+  colorvar = school_type
+)
+# Seems to matter a lot for Baccalaureate - makes sense, I think
+```
+
+### Tuition Revenue Per FTE
+
+```{r}
+# Curious about the instructional spending vs tuition revenue relationship
+plot_scatter(
+  data = filter(df, log_expend_per_fte > 5),
+  x = tuition_revenue_per_fte,
+  y = log_expend_per_fte,
+  add_color = FALSE,
+  colorvar = school_type
+)
+
+# Revenue vs student earnings
+plot_scatter(
+  data = df,
+  x = tuition_revenue_per_fte,
+  y = earnings_4_yrs_after_completion_median,
+  add_color = TRUE,
+  colorvar = ownership_label
+)
+# interesting that the relationship is flat for private FP
+
+# revenue vs completion
+plot_scatter(
+  data = df,
+  x = tuition_revenue_per_fte,
+  y = completion_completion_rate_4yr_150nt,
+  add_color = TRUE,
+  colorvar = ownership_label
+)
+# Same flat relationship fro private FP, positive for the others
+
+plot_scatter(
+  data = df,
+  x = tuition_revenue_per_fte,
+  y = student_retention_rate_four_year_full_time,
+  add_color = TRUE,
+  colorvar = ownership_label
+)
+```
+
+Interesting here that increased tuition revenue is positive related to student outcomes for public and private nfp, but not for private fp - I guess the extra revenue for those schools isn't going to improve the student's experience. 
+
+### Instructional Expenditures
+
+```{r}
+# vs student earnings
+plot_scatter(
+  data = df,
+  x = log_expend_per_fte,
+  y = earnings_4_yrs_after_completion_median,
+  add_color = FALSE,
+  colorvar = ownership_label
+)
+
+# Wow - need to remove this outlier
+plot_scatter(
+  data = filter(df, log_expend_per_fte > 1),
+  x = log_expend_per_fte,
+  y = earnings_4_yrs_after_completion_median,
+  add_color = FALSE,
+  colorvar = ownership_label
+)
+# Overall positive relationship - as one would expect
+
+plot_scatter(
+  data = filter(df, log_expend_per_fte > 1),
+  x = log_expend_per_fte,
+  y = earnings_4_yrs_after_completion_median,
+  add_color = TRUE,
+  colorvar = ownership_label
+)
+# Relationship is flat or negative in the for profit case
+
+plot_scatter(
+  data = filter(df, log_expend_per_fte > 1),
+  x = log_expend_per_fte,
+  y = completion_completion_rate_4yr_150nt,
+  add_color = TRUE,
+  colorvar = ownership_label
+)
+
+
+plot_scatter(
+  data = filter(df, log_expend_per_fte > 1),
+  x = log_expend_per_fte,
+  y = student_retention_rate_four_year_full_time,
+  add_color = TRUE,
+  colorvar = ownership_label
+)
+# Similarly for completion/retention
+# For profit relationships are very weak
+```
+
+### Average Cost
+
+```{r}
+# ...vs student earnings
+plot_scatter(
+  data = df,
+  x = avg_cost_comb,
+  y = earnings_4_yrs_after_completion_median,
+  add_color = FALSE,
+  colorvar = ownership_label
+)
+
+plot_scatter(
+  data = df,
+  x = avg_cost_comb,
+  y = earnings_4_yrs_after_completion_median,
+  add_color = TRUE,
+  colorvar = ownership_label
+)
+
+plot_scatter(
+  data = df,
+  x = avg_cost_comb,
+  y = completion_completion_rate_4yr_150nt,
+  add_color = TRUE,
+  colorvar = ownership_label
+)
+
+plot_scatter(
+  data = df,
+  x = avg_cost_comb,
+  y = student_retention_rate_four_year_full_time,
+  add_color = TRUE,
+  colorvar = ownership_label
+)
+```
+
